@@ -5,23 +5,28 @@ import serial.tools.list_ports
 import pandas as pd
 import time
 from datetime import datetime
-import matplotlib
-matplotlib.use('TkAgg')
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+# import matplotlib # Remove Matplotlib import
+# matplotlib.use('TkAgg') # Remove Matplotlib use
+# import matplotlib.pyplot as plt # Remove Matplotlib pyplot
+# import matplotlib.animation as animation # Remove Matplotlib animation
+# from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk # Remove Matplotlib backends
 from collections import deque
 import threading
 import queue
 import os
 import shutil
 
-# --- Heat Index Calculation ---
+# Import Plotly
+import plotly.graph_objects as go
+from PIL import Image, ImageTk # For displaying Plotly images in Tkinter
+import io # To capture image bytes from Plotly
+
+# --- Heat Index Calculation (remains unchanged) ---
 def calculate_heat_index(temp_c, rh):
     # Convert Celsius to Fahrenheit
     temp_f = (temp_c * 9/5) + 32
     rh = max(0, min(100, rh))  # Ensure relative humidity is between 0 and 100
-    
+
     # Coefficients from the simplified heat index formula (Rothfusz regression)
     c1 = -42.379
     c2 = 2.04901523
@@ -32,12 +37,12 @@ def calculate_heat_index(temp_c, rh):
     c7 = 1.22874e-3
     c8 = 8.5282e-4
     c9 = -1.99e-6
-    
+
     # Heat index calculation
     hi_f = c1 + (c2 * temp_f) + (c3 * rh) + (c4 * temp_f * rh) + \
            (c5 * temp_f**2) + (c6 * rh**2) + (c7 * temp_f**2 * rh) + \
            (c8 * temp_f * rh**2) + (c9 * temp_f**2 * rh**2)
-    
+
     # Adjustment for lower temperatures and humidity
     if temp_f <= 40:
         hi_f = 0.5 * (temp_f + 61.0 + ((temp_f - 68.0) * 1.2) + (rh * 0.094))
@@ -47,7 +52,7 @@ def calculate_heat_index(temp_c, rh):
     elif temp_f > 112 or rh < 13 or rh > 85:
         # Simplified adjustment for extreme conditions
         hi_f = temp_f + (0.25 * (rh - 50)) + (0.5 * (temp_f - 75))
-    
+
     # Convert back to Celsius
     hi_c = (hi_f - 32) * 5/9
     return round(hi_c, 2)
@@ -76,14 +81,14 @@ plot_heat_index2 = deque(maxlen=PLOT_MAX_POINTS)
 last_save_time = time.time()
 active_graph = 'temperature'  # Default graph
 latest_values = {'temp': 0, 'rh': 0, 'temp2': 0, 'humidity2': 0, 'heat_index': 0, 'heat_index2': 0}
-pan_mode = False
-panning = False  # Track if panning is active
+# pan_mode = False # Plotly handles panning internally
+# panning = False  # Track if panning is active
 
 # --- Threading Setup ---
 stop_event = threading.Event()
 data_queue = queue.Queue()
 ser = None
-ani = None
+# ani = None # Remove Matplotlib animation object
 
 # --- GUI Setup ---
 root = tk.Tk()
@@ -181,8 +186,8 @@ start_button.pack(side="left", padx=10, pady=5)
 stop_button = ttk.Button(button_frame, text="Stop Logging", command=lambda: stop_logging(), state="disabled")
 stop_button.pack(side="left", padx=10, pady=5)
 
-pan_button = ttk.Button(button_frame, text="Pan Graph", command=lambda: toggle_pan_mode())
-pan_button.pack(side="left", padx=10, pady=5)
+# pan_button = ttk.Button(button_frame, text="Pan Graph", command=lambda: toggle_pan_mode()) # Remove pan button (Plotly handles it)
+# pan_button.pack(side="left", padx=10, pady=5)
 
 # Graph Toggle Buttons with Checkboxes
 toggle_frame = ttk.Frame(root, padding="10")
@@ -194,7 +199,7 @@ dialog_vars = {graph: tk.BooleanVar(value=False) for graph in graphs}
 def set_graph(graph):
     global active_graph
     active_graph = graph
-    update_graph_label()
+    update_main_graph() # Call update for the main graph
 
 for graph in graphs:
     frame = ttk.Frame(toggle_frame)
@@ -208,59 +213,45 @@ status_var = tk.StringVar(value="Ready")
 status_label = ttk.Label(root, textvariable=status_var, padding="5")
 status_label.pack(fill="x")
 
-# Coordinate Label (Bottom Left)
-coord_frame = ttk.Frame(root)
-coord_frame.pack(anchor="sw", padx=10, pady=5)
-coord_var = tk.StringVar(value="X: -, Y: -")
-coord_label = ttk.Label(coord_frame, textvariable=coord_var, font=("Arial", 10))
-coord_label.pack()
+# Coordinate Label (Bottom Left) - Not directly supported by static Plotly embedding
+# coord_frame = ttk.Frame(root)
+# coord_frame.pack(anchor="sw", padx=10, pady=5)
+# coord_var = tk.StringVar(value="X: -, Y: -")
+# coord_label = ttk.Label(coord_frame, textvariable=coord_var, font=("Arial", 10))
+# coord_label.pack()
 
 # Plot Frame
 plot_frame = ttk.Frame(root)
 plot_frame.pack(fill="both", expand=True)
 
-fig, ax = plt.subplots(figsize=(10, 4))
-fig.suptitle('Real-Time Data')
-ax.set_xlabel('Time')
-ax.set_ylabel('Temperature (°C)')
-ax.grid(True)
-line, = ax.plot([], [], 'r-', label='Temperature (°C)')
-ax.legend(loc='upper left')
-ax.set_ylim(20, 30)
-fig.autofmt_xdate()
-fig.tight_layout()
+# Plotly Figure and Tkinter Canvas for main plot
+main_fig = go.Figure()
+main_fig.update_layout(
+    title='Real-Time Data',
+    xaxis_title='Time',
+    yaxis_title='Temperature (°C)',
+    # hovermode='x unified' # Enable hover for interactive features if a web view was used
+)
+# Add an initial trace
+main_fig.add_trace(go.Scatter(x=[], y=[], mode='lines', name='Temperature (°C)', line=dict(color='red')))
+main_graph_image_label = tk.Label(plot_frame)
+main_graph_image_label.pack(fill="both", expand=True)
 
-canvas = FigureCanvasTkAgg(fig, master=plot_frame)
-canvas.get_tk_widget().pack(fill="both", expand=True)
-
-# Add navigation toolbar for panning
-toolbar = NavigationToolbar2Tk(canvas, plot_frame)
-toolbar.update()
-
-def toggle_pan_mode():
-    global pan_mode
-    pan_mode = not pan_mode
-    if pan_mode:
-        canvas.toolbar.pan()
-        pan_button.config(text="Stop Panning")
-    else:
-        canvas.toolbar.pan()
-        canvas.toolbar.home()
-        pan_button.config(text="Pan Graph")
-    canvas.draw()
-
-def on_mouse_move(event):
-    if event.inaxes:
-        x = event.xdata
-        y = event.ydata
-        if x is not None and y is not None:
-            coord_var.set(f"X: {x:.2f}, Y: {y:.2f}")
-        else:
-            coord_var.set("X: -, Y: -")
-    else:
-        coord_var.set("X: -, Y: -")
-
-canvas.mpl_connect('motion_notify_event', on_mouse_move)
+# Removed Matplotlib specific toolbar and pan functions
+# toolbar = NavigationToolbar2Tk(canvas, plot_frame)
+# toolbar.update()
+# def toggle_pan_mode(): # Not needed with Plotly's built-in interactivity
+#     global pan_mode
+#     pan_mode = not pan_mode
+#     if pan_mode:
+#         canvas.toolbar.pan()
+#         pan_button.config(text="Stop Panning")
+#     else:
+#         canvas.toolbar.pan()
+#         canvas.toolbar.home()
+#         pan_button.config(text="Pan Graph")
+#     canvas.draw()
+# canvas.mpl_connect('motion_notify_event', on_mouse_move) # Not needed
 
 # Dialog windows for graphs
 dialog_windows = {}
@@ -273,53 +264,32 @@ def toggle_dialog(graph):
             dialog_windows[graph].geometry("800x600")
             dialog_windows[graph].protocol("WM_DELETE_WINDOW", lambda g=graph: close_dialog(g))
 
-            fig_dialog, ax_dialog = plt.subplots(figsize=(8, 6))
-            ax_dialog.set_xlabel('Time')
-            ax_dialog.set_ylabel(get_label(graph))
-            ax_dialog.grid(True)
-            line_dialog, = ax_dialog.plot([], [], get_color(graph), label=graph.capitalize())
-            ax_dialog.legend(loc='upper left')
-            ax_dialog.set_ylim(get_ylim(graph))
-            fig_dialog.autofmt_xdate()
-            fig_dialog.tight_layout()
+            fig_dialog = go.Figure()
+            fig_dialog.update_layout(
+                title=f"{graph.capitalize()} Graph",
+                xaxis_title='Time',
+                yaxis_title=get_label(graph),
+                # hovermode='x unified'
+            )
+            fig_dialog.add_trace(go.Scatter(x=[], y=[], mode='lines', name=graph.capitalize(), line=dict(color=get_color(graph))))
 
-            canvas_dialog = FigureCanvasTkAgg(fig_dialog, master=dialog_windows[graph])
-            canvas_dialog.get_tk_widget().pack(fill="both", expand=True)
+            dialog_windows[graph].plotly_figure = fig_dialog
+            dialog_windows[graph].image_label = tk.Label(dialog_windows[graph])
+            dialog_windows[graph].image_label.pack(fill="both", expand=True)
 
-            dialog_windows[graph].fig = fig_dialog
-            dialog_windows[graph].ax = ax_dialog
-            dialog_windows[graph].line = line_dialog
-            dialog_windows[graph].canvas = canvas_dialog
-
-            # Add animation for dialog graph
-            ani_dialog = animation.FuncAnimation(fig_dialog, lambda i, g=graph: update_dialog_graph(i, g), interval=PLOT_UPDATE_INTERVAL_MS, cache_frame_data=False)
-            dialog_windows[graph].ani = ani_dialog
+            # Schedule the update for the dialog graph
+            dialog_windows[graph].after_id = dialog_windows[graph].after(PLOT_UPDATE_INTERVAL_MS, lambda g=graph: update_dialog_graph(g))
     else:
         close_dialog(graph)
 
 def close_dialog(graph):
     if graph in dialog_windows:
+        # Cancel the scheduled update
+        if hasattr(dialog_windows[graph], 'after_id'):
+            dialog_windows[graph].after_cancel(dialog_windows[graph].after_id)
         dialog_windows[graph].destroy()
         del dialog_windows[graph]
         dialog_vars[graph].set(False)
-
-def update_dialog_graph(i, graph):
-    if not panning:
-        data_map = {
-            'temperature': plot_temperatures,
-            'humidity': plot_humidities,
-            'temp2': plot_temp2,
-            'humidity2': plot_humidity2,
-            'heat_index': plot_heat_index,
-            'heat_index2': plot_heat_index2
-        }
-        if plot_timestamps:
-            dialog_windows[graph].line.set_data(list(plot_timestamps), list(data_map[graph]))
-            if len(plot_timestamps) > 1:
-                dialog_windows[graph].ax.set_xlim(min(plot_timestamps), max(plot_timestamps))
-            dialog_windows[graph].ax.relim()
-            dialog_windows[graph].ax.autoscale_view(scalex=False)
-            dialog_windows[graph].canvas.draw()
 
 # Helper functions
 def get_label(graph):
@@ -346,47 +316,29 @@ def get_ylim(graph):
 
 def get_color(graph):
     colors = {
-        'temperature': 'r',
-        'humidity': 'b',
-        'temp2': 'g',
-        'humidity2': 'm',
+        'temperature': 'red',
+        'humidity': 'blue',
+        'temp2': 'green',
+        'humidity2': 'magenta',
         'heat_index': "orange",
         'heat_index2': 'purple'
     }
     return colors[graph]
 
 # --- Functions ---
-def update_graph_label():
-    labels = {
-        'temperature': 'Temperature (°C)',
-        'humidity': 'Humidity (%)',
-        'temp2': 'Temp2 (°C)',
-        'humidity2': 'Humidity2 (%)',
-        'heat_index': 'Heat Index (°C)',
-        'heat_index2': 'Heat Index2 (°C)'
-    }
-    ylims = {
-        'temperature': (20, 30),
-        'humidity': (40, 60),
-        'temp2': (-10, 30),
-        'humidity2': (0, 100),
-        'heat_index': (20, 40),
-        'heat_index2': (0, 40)
-    }
-    colors = {
-        'temperature': 'r',
-        'humidity': 'b',
-        'temp2': 'g',
-        'humidity2': 'm',
-        'heat_index': 'orange',
-        'heat_index2': 'purple'
-    }
-    ax.set_ylabel(labels[active_graph])
-    ax.set_ylim(ylims[active_graph])
-    line.set_label(labels[active_graph])
-    line.set_color(colors[active_graph])
-    ax.legend()
-    canvas.draw()
+def update_main_graph():
+    # Update main_fig layout
+    main_fig.update_layout(
+        yaxis_title=get_label(active_graph),
+        yaxis_range=get_ylim(active_graph),
+        showlegend=True # Ensure legend is shown
+    )
+    # Update the trace data and color
+    main_fig.data[0].name = get_label(active_graph)
+    main_fig.data[0].line.color = get_color(active_graph)
+
+    # Re-draw the graph
+    update_plot_image(main_fig, main_graph_image_label)
 
 def browse_directory(save_dir_var):
     global SAVE_DIR
@@ -397,7 +349,7 @@ def browse_directory(save_dir_var):
 
 def start_logging():
     global ser, new_records_buffer, plot_timestamps, plot_temperatures, plot_humidities, plot_temp2, plot_humidity2
-    global plot_heat_index, plot_heat_index2, last_save_time, stop_event, data_queue, ani, COM_PORT, BAUD_RATE
+    global plot_heat_index, plot_heat_index2, last_save_time, stop_event, data_queue, COM_PORT, BAUD_RATE
     global SAVE_INTERVAL_RECORDS, SAVE_INTERVAL_SECONDS, PLOT_MAX_POINTS, PLOT_UPDATE_INTERVAL_MS
 
     # Validate parameters
@@ -444,9 +396,8 @@ def start_logging():
     serial_thread = threading.Thread(target=serial_reader_thread, daemon=True)
     serial_thread.start()
 
-    # Start animation
-    ani = animation.FuncAnimation(fig, animate, interval=PLOT_UPDATE_INTERVAL_MS, cache_frame_data=False)
-    canvas.draw()
+    # Schedule the Plotly update function
+    root.after(PLOT_UPDATE_INTERVAL_MS, update_plots) # Start the plot update loop
 
     # Update UI
     start_button.config(state="disabled")
@@ -455,10 +406,11 @@ def start_logging():
     messagebox.showinfo("Info", "Logging started.")
 
 def stop_logging():
-    global ser, ani, stop_event
+    global ser, stop_event
     stop_event.set()
-    if ani:
-        ani.event_source.stop()
+    # Cancel the scheduled Plotly update
+    root.after_cancel(root.after_id) # Assuming root.after_id is set when update_plots is scheduled
+
     if ser and hasattr(ser, 'is_open') and ser.is_open:
         try:
             ser.close()
@@ -555,14 +507,19 @@ def serial_reader_thread():
         except Exception as e:
             status_var.set(f"Error closing serial port: {e}")
 
-def animate(i):
-    global last_save_time, new_records_buffer, latest_values, panning
+# This function replaces the Matplotlib animate function
+def update_plots():
+    global last_save_time, new_records_buffer, latest_values
+
+    # Process data from queue
     while not data_queue.empty():
         data = data_queue.get()
         try:
             dt_object = datetime.strptime(data['timestamp_str'], '%d/%m/%Y %H:%M:%S')
         except ValueError as ve:
             status_var.set(f"Timestamp parse error: {ve}")
+            # Re-schedule the update even if there's an error, to keep the loop going
+            root.after_id = root.after(PLOT_UPDATE_INTERVAL_MS, update_plots)
             return
 
         plot_timestamps.append(dt_object)
@@ -590,23 +547,34 @@ def animate(i):
             data['temp2'], data['humidity2'], data['heat_index'], data['heat_index2']
         ])
 
-    # Update main plot if not panning
-    if not panning:
-        data_map = {
-            'temperature': plot_temperatures,
-            'humidity': plot_humidities,
-            'temp2': plot_temp2,
-            'humidity2': plot_humidity2,
-            'heat_index': plot_heat_index,
-            'heat_index2': plot_heat_index2
-        }
-        if plot_timestamps:
-            line.set_data(list(plot_timestamps), list(data_map[active_graph]))
-            if len(plot_timestamps) > 1:
-                ax.set_xlim(min(plot_timestamps), max(plot_timestamps))
-            ax.relim()
-            ax.autoscale_view(scalex=False)
-            canvas.draw()
+    # Update main plot
+    data_map = {
+        'temperature': plot_temperatures,
+        'humidity': plot_humidities,
+        'temp2': plot_temp2,
+        'humidity2': plot_humidity2,
+        'heat_index': plot_heat_index,
+        'heat_index2': plot_heat_index2
+    }
+    if plot_timestamps:
+        # Update the main Plotly figure's trace data
+        main_fig.data[0].x = list(plot_timestamps)
+        main_fig.data[0].y = list(data_map[active_graph])
+
+        # Convert Plotly figure to image and update Tkinter label
+        update_plot_image(main_fig, main_graph_image_label)
+
+    # Update dialog plots
+    for graph, dialog_win in dialog_windows.items():
+        if dialog_win.winfo_exists(): # Check if dialog window is still open
+            dialog_fig = dialog_win.plotly_figure
+            dialog_fig.data[0].x = list(plot_timestamps)
+            dialog_fig.data[0].y = list(data_map[graph])
+            update_plot_image(dialog_fig, dialog_win.image_label)
+        else:
+            # If window was closed externally, clean up
+            close_dialog(graph)
+
 
     # Save periodically
     current_time = time.time()
@@ -617,9 +585,34 @@ def animate(i):
         new_records_buffer.clear()
         last_save_time = current_time
 
-def update_real_time_values():
-    # Get actual temperature (not used for heat index color coding per new requirement)
+    # Re-schedule the update
+    root.after_id = root.after(PLOT_UPDATE_INTERVAL_MS, update_plots)
 
+def update_plot_image(plotly_fig, tk_image_label):
+    # Get the current size of the Tkinter label to render the Plotly image with appropriate dimensions
+    width = tk_image_label.winfo_width()
+    height = tk_image_label.winfo_height()
+
+    if width == 0 or height == 0: # If widget is not yet rendered, use a default size
+        width, height = 800, 400
+
+    try:
+        img_bytes = plotly_fig.to_image(format="png", width=width, height=height)
+        pil_image = Image.open(io.BytesIO(img_bytes))
+        tk_image = ImageTk.PhotoImage(pil_image)
+        tk_image_label.config(image=tk_image)
+        tk_image_label.image = tk_image  # Keep a reference!
+    except Exception as e:
+        status_var.set(f"Error rendering plot: {e}")
+
+def update_dialog_graph(graph):
+    # This function is now mostly handled by update_plots, but the after schedule needs to be called
+    # to keep the dialog's update loop active if it's separate from the main root loop.
+    # We call update_plots which iterates through all dialogs.
+    if graph in dialog_windows and dialog_windows[graph].winfo_exists():
+        dialog_windows[graph].after_id = dialog_windows[graph].after(PLOT_UPDATE_INTERVAL_MS, lambda g=graph: update_dialog_graph(g))
+
+def update_real_time_values():
     # Update Temperature-1
     temp1 = latest_values['temp']
     temp1_value_label.config(text=f"{temp1:.2f} °C")
