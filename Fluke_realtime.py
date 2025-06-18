@@ -11,7 +11,7 @@ import queue
 # --- Configuration ---
 COM_PORT = 'COM3'
 BAUD_RATE = 9600
-EXCEL_FILE = 'fluke_log_realtime.xlsx'
+EXCEL_FILE = f"fluke_log_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
 
 SAVE_INTERVAL_RECORDS = 60
 SAVE_INTERVAL_SECONDS = 300
