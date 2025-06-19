@@ -184,6 +184,8 @@ stop_button.pack(side="left", padx=10, pady=5)
 pan_button = ttk.Button(button_frame, text="Pan Graph", command=lambda: toggle_pan_mode())
 pan_button.pack(side="left", padx=10, pady=5)
 
+calibrate_button = ttk.Button(button_frame, text="Calibrate Time", command=lambda: calibrate_time())
+calibrate_button.pack(side="left", padx=10, pady=5)
 # Graph Toggle Buttons with Checkboxes
 toggle_frame = ttk.Frame(root, padding="10")
 toggle_frame.pack(fill="x")
@@ -450,6 +452,7 @@ def start_logging():
 
     # Update UI
     start_button.config(state="disabled")
+    calibrate_button.config(state="")
     stop_button.config(state="normal")
     status_var.set("Logging started")
     messagebox.showinfo("Info", "Logging started.")
@@ -480,6 +483,8 @@ def stop_logging():
     # Update UI
     start_button.config(state="normal")
     stop_button.config(state="disabled")
+    calibrate_button.config(state="disabled")
+
 
 def on_closing():
     if messagebox.askokcancel("Quit", "Do you want to quit? Logging will stop."):
@@ -676,6 +681,37 @@ def save_to_excel(records):
     finally:
         if os.path.exists(temp_file):
             os.remove(temp_file)  # Clean up temp file
+
+def calibrate_time():
+    global ser, stop_event
+
+    if ser is None or not ser.is_open:
+        messagebox.showerror("Error", "Serial port not open.")
+        return
+
+    try:
+        now = datetime.now()
+
+        date_cmd = f"SYST:DATE {now.year},{now.month},{now.day}\n"
+        time_cmd = f"SYST:TIME {now.hour},{now.minute},{now.second}\n"
+
+        ser.write(date_cmd.encode())
+        time.sleep(0.5)
+        ser.write(time_cmd.encode())
+        time.sleep(0.5)
+
+        msg = (
+            f"Calibration complete:\n"
+            f"Sent Date: {date_cmd[9:].strip().replace(',','/')}\n"
+            f"Sent Time: {time_cmd[9:].strip().replace(',','/')}\n"
+        )
+
+        messagebox.showinfo("Time Calibration", msg)
+        status_var.set("Time calibration completed")
+
+    except Exception as e:
+        messagebox.showerror("Error", f"Time calibration failed: {e}")
+        status_var.set("Time calibration error")
 
 # --- Start GUI ---
 root.mainloop()
